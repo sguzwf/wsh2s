@@ -49,7 +49,7 @@ func servH2(w http.ResponseWriter, r *http.Request) {
 	case r.Method == "CONNECT":
 		serveH2c(w, r)
 	case r.Host == "i:80":
-		w.WriteHeader(http.StatusFound)
+		w.Write(pacResponseBytes)
 	case r.URL.Path == "/r" && r.Method == "POST":
 		serveH2r(w, r)
 	default:

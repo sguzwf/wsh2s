@@ -25,7 +25,13 @@ _testmain.go
 #Godeps/_workspace
 
 wsh2s
-.externalToolBuilders
+BRICKS
+ca.crt
+ca.key
+ca.srl
+server.crt
+server.csr
+server.key
 
 log
 public

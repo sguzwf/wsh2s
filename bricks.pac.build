@@ -1,0 +1,9 @@
+#!/bin/bash
+
+rm -rf BRICKS
+rm bricks.pac
+git clone https://github.com/Leask/BRICKS.git
+cd BRICKS
+./bricks makpac 'PROXY {{.}}; DIRECT'
+cp ./bricks.pac ..
+cd ..
