@@ -7,9 +7,11 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
-	"github.com/empirefox/gotool/paas"
+	"github.com/empirefox/acmewrapper"
 	"github.com/golang/glog"
 	"golang.org/x/net/http2"
 )
@@ -24,9 +26,9 @@ var (
 func serveH2() {
 	tlsConfig := newTlsConfig()
 	tlsListener := tls.NewListener(globalWsListener{}, tlsConfig)
-	h2Server := newH2Server()
+	h2Server := newH2Server(tlsConfig)
 	for {
-		glog.Errorln(h2Server.Serve(tlsListener))
+		log.Errorln(h2Server.Serve(tlsListener))
 		time.Sleep(time.Second * h2sleep)
 		if h2sleep < h2sleepup {
 			h2sleep++
@@ -34,11 +36,12 @@ func serveH2() {
 	}
 }
 
-func newH2Server() *http.Server {
+func newH2Server(tlsConfig *tls.Config) *http.Server {
 	http2.VerboseLogs = false
 	h2Server := &http.Server{
-		Addr:    paas.BindAddr,
-		Handler: http.HandlerFunc(servH2),
+		Addr:      ":8444", // any, not used
+		Handler:   http.HandlerFunc(servH2),
+		TLSConfig: tlsConfig,
 	}
 	http2.ConfigureServer(h2Server, nil)
 	return h2Server
@@ -49,7 +52,11 @@ func servH2(w http.ResponseWriter, r *http.Request) {
 	case r.Method == "CONNECT":
 		serveH2c(w, r)
 	case r.Host == "i:80":
-		w.Write(pacResponseBytes)
+		if r.Method == "HEAD" {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.Write(pacResponseBytes)
+		}
 	case r.URL.Path == "/r" && r.Method == "POST":
 		serveH2r(w, r)
 	default:
@@ -61,13 +68,13 @@ func serveH2c(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if err := recover(); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			glog.Errorln(err)
+			log.Errorln(err)
 		}
 	}()
-	glog.Infoln("CONNECT to", r.Host)
+	log.Infoln("CONNECT to", r.Host)
 	remote, err := net.DialTimeout("tcp", r.Host, time.Second*10)
 	if err != nil {
-		glog.Errorln(err)
+		log.Errorln(err)
 		w.WriteHeader(http.StatusNotImplemented)
 		return
 	}
@@ -90,16 +97,16 @@ func serveH2r(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if err := recover(); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			glog.Errorln(err)
+			log.Errorln(err)
 		} else {
 			w.WriteHeader(http.StatusOK)
 		}
 	}()
 
-	glog.Infoln("REVERSE to", r.Host)
+	log.Infoln("REVERSE to", r.Host)
 	remote, err := net.DialTimeout("tcp", r.Host, time.Second*10)
 	if err != nil {
-		glog.Errorln(err)
+		log.Errorln(err)
 		w.WriteHeader(http.StatusNotImplemented)
 		return
 	}
@@ -111,7 +118,7 @@ func serveH2r(w http.ResponseWriter, r *http.Request) {
 	//	resr = io.TeeReader(resr, os.Stdout)
 	res, err := http.ReadResponse(bufio.NewReader(resr), nil)
 	if err != nil {
-		glog.Errorln(err)
+		log.Errorln(err)
 		return
 	}
 	if res.Body != nil {
@@ -121,16 +128,36 @@ func serveH2r(w http.ResponseWriter, r *http.Request) {
 }
 
 func newTlsConfig() *tls.Config {
-	cert, err := tls.LoadX509KeyPair("server.crt", "server.key")
-	if err != nil {
-		glog.Fatal(err)
+	if os.Getenv("TEST_MODE") == "1" {
+		cert, err := tls.LoadX509KeyPair("server.crt", "server.key")
+		if err != nil {
+			glog.Fatal(err)
+		}
+
+		config := tls.Config{
+			ClientAuth:   tls.NoClientCert,
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+			NextProtos:   []string{http2.NextProtoTLS},
+		}
+		return &config
 	}
 
-	config := tls.Config{
-		ClientAuth:   tls.NoClientCert,
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-		NextProtos:   []string{http2.NextProtoTLS},
+	w, err := acmewrapper.New(acmewrapper.Config{
+		Domains: strings.Split(os.Getenv("ACME_DOMAINS"), ","),
+
+		TLSCertFile: "cert.pem",
+		TLSKeyFile:  "key.pem",
+
+		RegistrationFile: "user.reg",
+		PrivateKeyFile:   "user.pem",
+
+		TOSCallback: acmewrapper.TOSAgree,
+
+		HTTP01ChallengeProvider: challengeProvider,
+	})
+	if err != nil {
+		log.Fatalf("acmewrapper failed: %s", err)
 	}
-	return &config
+	return w.TLSConfig()
 }

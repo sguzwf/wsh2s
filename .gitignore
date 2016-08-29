@@ -24,6 +24,8 @@ _testmain.go
 #Godeps
 #Godeps/_workspace
 
+examples
+h2demo
 wsh2s
 BRICKS
 ca.crt
@@ -32,6 +34,10 @@ ca.srl
 server.crt
 server.csr
 server.key
+user.pem
+user.reg
+cert.pem
+key.pem
 
 log
 public

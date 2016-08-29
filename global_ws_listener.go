@@ -3,8 +3,6 @@ package main
 import (
 	"errors"
 	"net"
-
-	"github.com/golang/glog"
 )
 
 var (
@@ -33,6 +31,6 @@ func (globalWsListener) Addr() net.Addr {
 }
 
 func (globalWsListener) Close() error {
-	glog.Infoln("globalWsListener.Close called")
+	log.Debugln("globalWsListener.Close called")
 	return nil
 }
