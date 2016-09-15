@@ -8,10 +8,10 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/empirefox/acmewrapper"
+	"github.com/empirefox/gotool/paas"
 	"github.com/golang/glog"
 	"golang.org/x/net/http2"
 )
@@ -24,6 +24,7 @@ var (
 )
 
 func serveH2() {
+	time.Sleep(time.Second * 2)
 	tlsConfig := newTlsConfig()
 	tlsListener := tls.NewListener(globalWsListener{}, tlsConfig)
 	h2Server := newH2Server(tlsConfig)
@@ -143,8 +144,11 @@ func newTlsConfig() *tls.Config {
 		return &config
 	}
 
+	ConnectDBIfNot()
+	DB.AutoMigrate(new(DbFile))
+
 	w, err := acmewrapper.New(acmewrapper.Config{
-		Domains: strings.Split(os.Getenv("ACME_DOMAINS"), ","),
+		Domains: []string{paas.GetEnv(os.Getenv("ACME_DOMAIN"), paas.Info.WsDomain)},
 
 		TLSCertFile: "cert.pem",
 		TLSKeyFile:  "key.pem",
@@ -155,6 +159,9 @@ func newTlsConfig() *tls.Config {
 		TOSCallback: acmewrapper.TOSAgree,
 
 		HTTP01ChallengeProvider: challengeProvider,
+
+		SaveFileCallback: SaveFileToDB,
+		LoadFileCallback: LoadFileFromDB,
 	})
 	if err != nil {
 		log.Fatalf("acmewrapper failed: %s", err)

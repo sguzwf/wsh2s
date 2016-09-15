@@ -24,6 +24,7 @@ _testmain.go
 #Godeps
 #Godeps/_workspace
 
+demo
 examples
 h2demo
 wsh2s
