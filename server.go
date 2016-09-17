@@ -32,8 +32,8 @@ type Server struct {
 	// globalWsListener
 	globalWsChan chan *Ws
 
-	infoResponse []byte
-	pacResponse  []byte
+	info []byte
+	pac  []byte
 }
 
 func (s *Server) Serve() error {
@@ -74,8 +74,8 @@ func (s *Server) Serve() error {
 		return err
 	}
 
-	s.infoResponse = wrapToResponse(info)
-	s.pacResponse = wrapToResponse(ps)
+	s.info = info
+	s.pac = ps
 
 	s.challengeProvider = new(wrapperChallengeProvider)
 	s.httpServer = s.newHttpServer()

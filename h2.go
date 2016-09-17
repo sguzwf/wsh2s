@@ -58,9 +58,9 @@ func (s *Server) serveH2(w http.ResponseWriter, r *http.Request) {
 	case r.Host == "i:80":
 		w.WriteHeader(http.StatusOK)
 	case r.Host == "i:81":
-		w.Write(s.infoResponse)
+		w.Write(s.info)
 	case r.Host == "i:82":
-		w.Write(s.pacResponse)
+		w.Write(s.pac)
 	case r.URL.Path == "/r" && r.Method == "POST":
 		s.serveH2r(w, r)
 	default:
