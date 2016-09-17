@@ -39,6 +39,7 @@ user.pem
 user.reg
 cert.pem
 key.pem
+bricks.pac
 
 log
 public

@@ -1,27 +1,16 @@
-package main
+package wsh2s
 
 import (
 	"io"
-	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-func NewWs(ws *websocket.Conn, bufSize int, pingPeriod time.Duration) *Ws {
-	ws.SetPongHandler(func(msg string) error {
-		sent, err := strconv.ParseInt(msg, 36, 64)
-		if err != nil {
-			log.Warningln("Wrong pong time:", msg)
-			return nil
-		}
-		log.Infof("Ping time: %dns\n", time.Now().UnixNano()-sent)
-		return nil
-	})
+func NewWs(ws *websocket.Conn, bufSize int) *Ws {
 	return &Ws{
-		Conn:       ws,
-		pingPeriod: pingPeriod,
-		copyBuf:    make([]byte, bufSize),
+		Conn:    ws,
+		copyBuf: make([]byte, bufSize),
 	}
 }
 
@@ -30,7 +19,6 @@ type Ws struct {
 	*websocket.Conn
 	copyBuf       []byte
 	reader        io.Reader
-	pingPeriod    time.Duration
 	OnTextMessage func(r io.Reader)
 }
 
@@ -47,14 +35,10 @@ func (ws Ws) WriteText(b []byte) error {
 
 func (ws Ws) Write(b []byte) (written int, err error) {
 	err = ws.Conn.WriteMessage(websocket.BinaryMessage, b)
-	//	log.Infoln("ws sent", len(b))
 	return len(b), err
 }
 
 func (ws *Ws) Read(p []byte) (n int, err error) {
-	defer func() {
-		//		log.Infoln("ws resv", n)
-	}()
 	if ws.reader == nil {
 		var t int
 		var er error
@@ -118,25 +102,4 @@ func (ws *Ws) WriteTo(w io.Writer) (written int64, err error) {
 		}
 	}
 	return written, err
-}
-
-// NOT compatable with funcs above
-func (ws *Ws) Ping() {
-	ticker := time.NewTicker(ws.pingPeriod)
-	defer func() {
-		log.Infoln("ping ticker stop")
-		ticker.Stop()
-		ws.Close()
-	}()
-
-	for {
-		select {
-		case <-ticker.C:
-			unixnano := strconv.FormatInt(time.Now().UnixNano(), 36)
-			if err := ws.WriteMessage(websocket.PingMessage, []byte(unixnano)); err != nil {
-				log.Errorln(err)
-				return
-			}
-		}
-	}
 }

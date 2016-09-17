@@ -1,105 +1,117 @@
-package main
+package wsh2s
 
 import (
-	"bytes"
-	"flag"
-	"io/ioutil"
+	"encoding/json"
 	"net/http"
-	"os"
-	"strconv"
 	"time"
 
-	"golang.org/x/net/http2"
-
-	"github.com/Sirupsen/logrus"
 	"github.com/empirefox/gotool/paas"
 	"github.com/gorilla/websocket"
-)
-
-const (
-	pingPeriod = 45 * time.Second
-	bufSize    = 32 << 10
+	"github.com/uber-go/zap"
 )
 
 var (
-	h2v = flag.Bool("h2v", false, "enable http2 verbose logs")
-
-	log  = logrus.New()
-	logf = log.Printf
-
-	challengeProvider *wrapperChallengeProvider
-	httpServer        *http.Server
-
-	upgrader = websocket.Upgrader{
-		ReadBufferSize:  bufSize,
-		WriteBufferSize: bufSize,
-	}
-
-	pacResponseBytes []byte
+	Log zap.Logger
 )
 
-func init() {
-	// Log as JSON instead of the default ASCII formatter.
-	logrus.SetFormatter(&logrus.TextFormatter{})
+type Server struct {
+	AcmeDomain         string
+	DropboxAccessToken string
+	DropboxDomainKey   string
+	H2RetryMaxSecond   time.Duration
+	H2SleepToRunSecond time.Duration
+	WsBufSize          int
+	PingSecond         uint
 
-	// Output to stderr instead of stdout, could also be a file.
-	logrus.SetOutput(os.Stderr)
+	dbox              *dropboxer
+	challengeProvider *wrapperChallengeProvider
+	httpServer        *http.Server
+	upgrader          websocket.Upgrader
 
-	// Only log the warning severity or above.
-	logrus.SetLevel(logrus.WarnLevel)
-
-	challengeProvider = new(wrapperChallengeProvider)
-
-	httpServer = newHttpServer()
+	// globalWsListener
+	globalWsChan chan *Ws
 }
 
-// ACME_DOMAINS=www.xxx.com
-func main() {
-	flag.Parse()
-	http2.VerboseLogs = *h2v
+func (s *Server) Serve() error {
+	s.globalWsChan = make(chan *Ws)
+	if s.WsBufSize == 0 {
+		s.WsBufSize = 129 << 10
+	}
+	if s.PingSecond == 0 {
+		s.PingSecond = 45
+	}
+	s.upgrader.ReadBufferSize = s.WsBufSize
+	s.upgrader.WriteBufferSize = s.WsBufSize
 
-	if ps, err := ioutil.ReadFile("bricks.pac"); err != nil {
-		log.Fatal(err)
-	} else {
-		var b bytes.Buffer
-		b.WriteString("HTTP/1.1 200 OK\r\nContent-Length: ")
-		b.WriteString(strconv.Itoa(len(ps)))
-		b.WriteString("\r\n\r\n")
-		b.Write(ps)
-		pacResponseBytes = b.Bytes()
+	if s.H2RetryMaxSecond == 0 {
+		s.H2RetryMaxSecond = 30
 	}
 
-	go serveH2()
-	log.Fatal(httpServer.ListenAndServe())
+	info, err := json.Marshal(map[string]interface{}{
+		"PingSecond": s.PingSecond,
+		"WsBufSize":  s.WsBufSize,
+	})
+	if err != nil {
+		Log.Error("compute server info", zap.Error(err))
+		return err
+	}
+
+	s.dbox, err = newDropbox(s.DropboxAccessToken, s.DropboxDomainKey)
+	if err != nil {
+		Log.Error("create dropbox client", zap.Error(err))
+		return err
+	}
+
+	ps, err := s.dbox.LoadPlainFile("/bricks.pac")
+	if err != nil {
+		Log.Error("load pac from dropbox", zap.Error(err))
+		return err
+	}
+	s.httpServer = s.newHttpServer(info, ps)
+
+	s.challengeProvider = new(wrapperChallengeProvider)
+
+	go s.listenAndServeH2()
+	return s.httpServer.ListenAndServe()
 }
 
-func serveHa(w http.ResponseWriter, req *http.Request) {
-	w.WriteHeader(http.StatusOK)
-}
-
-func serveWs(w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if err := recover(); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			log.Errorln(err)
+			Log.Error("serveWs error", zap.Object("err", err))
 		}
 	}()
-	log.Infoln("new websocket request")
-	ws, err := upgrader.Upgrade(w, r, nil)
+	Log.Debug("websocket start")
+	ws, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Errorln(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		Log.Error("websocket failed", zap.Error(err))
 		return
 	}
-	log.Infoln("websocket ok")
-	c := NewWs(ws, bufSize, pingPeriod)
-	globalWsChan <- c
+	Log.Debug("websocket ok")
+	s.globalWsChan <- NewWs(ws, s.WsBufSize)
 }
 
-func newHttpServer() *http.Server {
+func (s *Server) newHttpServer(info, pacResponseBytes []byte) *http.Server {
 	httpMux := http.NewServeMux()
-	httpMux.HandleFunc("/h2p", serveWs)
-	httpMux.HandleFunc("/", serveHa)
-	httpMux.HandleFunc("/.well-known/acme-challenge/", challengeProvider.challengeHanlder)
-	httpServer := &http.Server{Addr: paas.BindAddr, Handler: httpMux}
-	return httpServer
+
+	httpMux.HandleFunc("/h2p", s.serveWs)
+	httpMux.HandleFunc("/.well-known/acme-challenge/", s.challengeProvider.challengeHanlder)
+
+	httpMux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	httpMux.HandleFunc("/info", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write(info)
+	})
+
+	httpMux.HandleFunc("/pac", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write(pacResponseBytes)
+	})
+
+	return &http.Server{Addr: paas.BindAddr, Handler: httpMux}
 }

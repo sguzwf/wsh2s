@@ -1,4 +1,4 @@
-package main
+package wsh2s
 
 import "net/http"
 

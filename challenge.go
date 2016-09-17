@@ -1,12 +1,15 @@
-package main
+package wsh2s
 
 import (
+	"log"
 	"net/http"
 	"strings"
 	"sync"
 
 	"github.com/xenolf/lego/acme"
 )
+
+var logf = log.Printf
 
 //  github.com/dkumor/acmewrapper/configuration.go++
 //  type Config struct {
