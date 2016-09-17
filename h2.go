@@ -45,7 +45,9 @@ func (s *Server) newH2Server(tlsConfig *tls.Config) *http.Server {
 		Handler:   http.HandlerFunc(s.serveH2),
 		TLSConfig: tlsConfig,
 	}
-	http2.ConfigureServer(h2Server, nil)
+	http2.ConfigureServer(h2Server, &http2.Server{
+		MaxReadFrameSize: s.H2BufSize,
+	})
 	return h2Server
 }
 
@@ -55,6 +57,10 @@ func (s *Server) serveH2(w http.ResponseWriter, r *http.Request) {
 		s.serveH2c(w, r)
 	case r.Host == "i:80":
 		w.WriteHeader(http.StatusOK)
+	case r.Host == "i:81":
+		w.Write(s.infoResponse)
+	case r.Host == "i:82":
+		w.Write(s.pacResponse)
 	case r.URL.Path == "/r" && r.Method == "POST":
 		s.serveH2r(w, r)
 	default:

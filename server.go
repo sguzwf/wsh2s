@@ -21,6 +21,7 @@ type Server struct {
 	H2RetryMaxSecond   time.Duration
 	H2SleepToRunSecond time.Duration
 	WsBufSize          int
+	H2BufSize          uint32
 	PingSecond         uint
 
 	dbox              *dropboxer
@@ -30,12 +31,18 @@ type Server struct {
 
 	// globalWsListener
 	globalWsChan chan *Ws
+
+	infoResponse []byte
+	pacResponse  []byte
 }
 
 func (s *Server) Serve() error {
 	s.globalWsChan = make(chan *Ws)
+	if s.H2BufSize == 0 {
+		s.H2BufSize = 64 << 10
+	}
 	if s.WsBufSize == 0 {
-		s.WsBufSize = 129 << 10
+		s.WsBufSize = 65 << 10
 	}
 	if s.PingSecond == 0 {
 		s.PingSecond = 45
@@ -49,7 +56,6 @@ func (s *Server) Serve() error {
 
 	info, err := json.Marshal(map[string]interface{}{
 		"PingSecond": s.PingSecond,
-		"WsBufSize":  s.WsBufSize,
 	})
 	if err != nil {
 		Log.Error("compute server info", zap.Error(err))
@@ -67,9 +73,12 @@ func (s *Server) Serve() error {
 		Log.Error("load pac from dropbox", zap.Error(err))
 		return err
 	}
-	s.httpServer = s.newHttpServer(info, ps)
+
+	s.infoResponse = wrapToResponse(info)
+	s.pacResponse = wrapToResponse(ps)
 
 	s.challengeProvider = new(wrapperChallengeProvider)
+	s.httpServer = s.newHttpServer()
 
 	go s.listenAndServeH2()
 	return s.httpServer.ListenAndServe()
@@ -93,24 +102,14 @@ func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
 	s.globalWsChan <- NewWs(ws, s.WsBufSize)
 }
 
-func (s *Server) newHttpServer(info, pacResponseBytes []byte) *http.Server {
+func (s *Server) newHttpServer() *http.Server {
 	httpMux := http.NewServeMux()
 
-	httpMux.HandleFunc("/h2p", s.serveWs)
+	httpMux.HandleFunc("/p", s.serveWs)
 	httpMux.HandleFunc("/.well-known/acme-challenge/", s.challengeProvider.challengeHanlder)
 
 	httpMux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	})
-
-	httpMux.HandleFunc("/info", func(w http.ResponseWriter, req *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write(info)
-	})
-
-	httpMux.HandleFunc("/pac", func(w http.ResponseWriter, req *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write(pacResponseBytes)
 	})
 
 	return &http.Server{Addr: paas.BindAddr, Handler: httpMux}
