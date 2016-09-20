@@ -17,9 +17,7 @@ import (
 )
 
 func (s *Server) listenAndServeH2() {
-	if s.H2SleepToRunSecond != 0 {
-		time.Sleep(time.Second * s.H2SleepToRunSecond)
-	}
+	time.Sleep(time.Second * s.H2SleepToRunSecond)
 
 	tlsConfig, err := s.newH2TlsConfig()
 	if err != nil {
