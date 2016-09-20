@@ -3,6 +3,7 @@ package wsh2s
 import (
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/empirefox/gotool/paas"
@@ -32,12 +33,16 @@ type Server struct {
 	// globalWsListener
 	globalWsChan chan *Ws
 
-	info []byte
-	pac  []byte
+	info  []byte
+	pac   []byte
+	muPac sync.RWMutex
 }
 
 func (s *Server) Serve() error {
 	s.globalWsChan = make(chan *Ws)
+	if s.H2SleepToRunSecond == 0 {
+		s.H2SleepToRunSecond = 2
+	}
 	if s.H2BufSize == 0 {
 		s.H2BufSize = 64 << 10
 	}
@@ -68,14 +73,11 @@ func (s *Server) Serve() error {
 		return err
 	}
 
-	ps, err := s.dbox.LoadPlainFile("/bricks.pac")
-	if err != nil {
-		Log.Error("load pac from dropbox", zap.Error(err))
+	if _, err = s.loadPac(); err != nil {
 		return err
 	}
 
 	s.info = info
-	s.pac = ps
 
 	s.challengeProvider = new(wrapperChallengeProvider)
 	s.httpServer = s.newHttpServer()
@@ -113,4 +115,36 @@ func (s *Server) newHttpServer() *http.Server {
 	})
 
 	return &http.Server{Addr: paas.BindAddr, Handler: httpMux}
+}
+
+func (s *Server) loadPac() ([]byte, error) {
+	ps, err := s.dbox.LoadPlainFile("/bricks.pac")
+	if err != nil {
+		Log.Error("load pac from dropbox", zap.Error(err))
+		return nil, err
+	}
+	s.muPac.Lock()
+	defer s.muPac.Unlock()
+	s.pac = ps
+	return ps, nil
+}
+
+func (s *Server) getPac() []byte {
+	s.muPac.RLock()
+	defer s.muPac.RUnlock()
+	return s.pac
+}
+
+func (s *Server) tryLoadPac() []byte {
+	ps, err := s.dbox.LoadPlainFile("/bricks.pac")
+	if err != nil {
+		Log.Error("load pac from dropbox", zap.Error(err))
+		s.muPac.RLock()
+		defer s.muPac.RUnlock()
+		return s.pac
+	}
+	s.muPac.Lock()
+	defer s.muPac.Unlock()
+	s.pac = ps
+	return s.pac
 }
