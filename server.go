@@ -24,7 +24,7 @@ type Server struct {
 	WsBufSize          int
 	H2BufSize          uint32
 	PingSecond         uint
-	TCP                uint
+	TCP                uint64
 
 	dbox              *dropboxer
 	challengeProvider *wrapperChallengeProvider
