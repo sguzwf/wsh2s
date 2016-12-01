@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/empirefox/acmewrapper"
@@ -16,7 +17,7 @@ import (
 	"golang.org/x/net/http2"
 )
 
-func (s *Server) listenAndServeH2() {
+func (s *Server) listenAndServeH2All() {
 	time.Sleep(time.Second * s.H2SleepToRunSecond)
 
 	tlsConfig, err := s.newH2TlsConfig()
@@ -24,29 +25,66 @@ func (s *Server) listenAndServeH2() {
 		return
 	}
 
-	wsListener := newGlobalWsListener(s.globalWsChan)
-	tlsListener := tls.NewListener(wsListener, tlsConfig)
-	h2Server := s.newH2Server(tlsConfig)
-	for {
-		err := h2Server.Serve(tlsListener)
-		Log.Error("h2 server failed", zap.Error(err))
-		time.Sleep(time.Second * wsListener.h2sleep)
-		if wsListener.h2sleep < s.H2RetryMaxSecond {
-			wsListener.h2sleep++
+	go s.listenAndServeH2(tlsConfig, true)
+	s.listenAndServeH2(tlsConfig, false)
+}
+
+func (s *Server) listenAndServeH2(tlsConfig *tls.Config, tcp bool) {
+	var laddr string
+	var tlsListener net.Listener
+	var err error
+	if tcp {
+		if s.TCP == 0 {
+			return
 		}
+		laddr = fmt.Sprintf(":%d", s.TCP)
+		tlsListener, err = tls.Listen("tcp", laddr, tlsConfig)
+		if err != nil {
+			Log.Error("tcp tlsListener failed", zap.Error(err))
+			return
+		}
+	} else {
+		laddr = ":8444"
+		tlsListener = tls.NewListener(newGlobalWsListener(s.globalWsChan), tlsConfig)
+	}
+
+	h2Server, afterServeError := s.newH2Server(tlsConfig, laddr)
+	for {
+		err = h2Server.Serve(tlsListener)
+		afterServeError(err)
 	}
 }
 
-func (s *Server) newH2Server(tlsConfig *tls.Config) *http.Server {
+func (s *Server) newH2Server(tlsConfig *tls.Config, laddr string) (*http.Server, func(error)) {
+	var mu sync.Mutex
+	var h2sleep time.Duration = 1
 	h2Server := &http.Server{
-		Addr:      ":8444", // any, not used
+		Addr:      laddr,
 		Handler:   http.HandlerFunc(s.serveH2),
 		TLSConfig: tlsConfig,
+		ConnState: func(c net.Conn, s http.ConnState) {
+			if s == http.StateNew {
+				mu.Lock()
+				h2sleep = 1
+				mu.Unlock()
+			}
+		},
 	}
 	http2.ConfigureServer(h2Server, &http2.Server{
 		MaxReadFrameSize: s.H2BufSize,
 	})
-	return h2Server
+
+	afterServeError := func(err error) {
+		Log.Error("h2 server failed", zap.Error(err))
+		mu.Lock()
+		if h2sleep < s.H2RetryMaxSecond {
+			h2sleep++
+		}
+		sec := h2sleep
+		mu.Unlock()
+		time.Sleep(time.Second * sec)
+	}
+	return h2Server, afterServeError
 }
 
 func (s *Server) serveH2(w http.ResponseWriter, r *http.Request) {

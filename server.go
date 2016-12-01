@@ -24,6 +24,7 @@ type Server struct {
 	WsBufSize          int
 	H2BufSize          uint32
 	PingSecond         uint
+	TCP                uint
 
 	dbox              *dropboxer
 	challengeProvider *wrapperChallengeProvider
@@ -82,7 +83,7 @@ func (s *Server) Serve() error {
 	s.challengeProvider = new(wrapperChallengeProvider)
 	s.httpServer = s.newHttpServer()
 
-	go s.listenAndServeH2()
+	go s.listenAndServeH2All()
 	return s.httpServer.ListenAndServe()
 }
 
