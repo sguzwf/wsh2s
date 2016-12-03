@@ -3,12 +3,12 @@ package wsh2s
 import (
 	"bufio"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -25,8 +25,7 @@ func (s *Server) listenAndServeH2All() {
 		return
 	}
 
-	go s.listenAndServeH2(tlsConfig, true)
-	s.listenAndServeH2(tlsConfig, false)
+	s.listenAndServeH2(tlsConfig, s.TCP != 0)
 }
 
 func (s *Server) listenAndServeH2(tlsConfig *tls.Config, tcp bool) {
@@ -167,16 +166,27 @@ func (s *Server) serveH2r(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) newH2TlsConfig() (*tls.Config, error) {
-	if os.Getenv("TEST_MODE") == "1" {
+	if s.TCP != 0 {
+		// 1. LoadServerCert
 		cert, err := tls.LoadX509KeyPair("server.crt", "server.key")
 		if err != nil {
-			Log.Error("load keys failed", zap.Error(err))
+			Log.Error("loading server certificate", zap.Error(err))
 			return nil, err
 		}
 
+		// 2. LoadCACert
+		caCert, err := ioutil.ReadFile("chain.pem")
+		if err != nil {
+			Log.Error("loading CA certificate", zap.Error(err))
+			return nil, err
+		}
+		caPool := x509.NewCertPool()
+		caPool.AppendCertsFromPEM(caCert)
+
 		config := tls.Config{
-			ClientAuth:   tls.NoClientCert,
 			Certificates: []tls.Certificate{cert},
+			ClientCAs:    caPool,
+			ClientAuth:   tls.RequireAndVerifyClientCert,
 			MinVersion:   tls.VersionTLS12,
 			NextProtos:   []string{http2.NextProtoTLS},
 		}

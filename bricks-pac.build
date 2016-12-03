@@ -2,7 +2,7 @@
 
 rm -rf BRICKS
 rm bricks.pac
-git clone https://github.com/Leask/BRICKS.git
+git clone --depth=1 https://github.com/Leask/BRICKS.git
 cd BRICKS
 ./bricks makpac 'PROXY {{.}}; DIRECT'
 cp ./bricks.pac ..

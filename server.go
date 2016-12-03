@@ -2,6 +2,8 @@ package wsh2s
 
 import (
 	"encoding/json"
+	"errors"
+	"io/ioutil"
 	"net/http"
 	"sync"
 	"time"
@@ -68,10 +70,12 @@ func (s *Server) Serve() error {
 		return err
 	}
 
-	s.dbox, err = newDropbox(s.DropboxAccessToken, s.DropboxDomainKey)
-	if err != nil {
-		Log.Error("create dropbox client", zap.Error(err))
-		return err
+	if s.TCP == 0 {
+		s.dbox, err = newDropbox(s.DropboxAccessToken, s.DropboxDomainKey)
+		if err != nil {
+			Log.Error("create dropbox client", zap.Error(err))
+			return err
+		}
 	}
 
 	if _, err = s.loadPac(); err != nil {
@@ -80,11 +84,16 @@ func (s *Server) Serve() error {
 
 	s.info = info
 
-	s.challengeProvider = new(wrapperChallengeProvider)
-	s.httpServer = s.newHttpServer()
+	if s.TCP == 0 {
+		s.challengeProvider = new(wrapperChallengeProvider)
+		s.httpServer = s.newHttpServer()
 
-	go s.listenAndServeH2All()
-	return s.httpServer.ListenAndServe()
+		go s.listenAndServeH2All()
+		return s.httpServer.ListenAndServe()
+	}
+
+	s.listenAndServeH2All()
+	return errors.New("TCP server failed")
 }
 
 func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +128,10 @@ func (s *Server) newHttpServer() *http.Server {
 }
 
 func (s *Server) loadPac() ([]byte, error) {
-	ps, err := s.dbox.LoadPlainFile("/bricks.pac")
+	ps, err := ioutil.ReadFile("bricks.pac")
+	if err != nil {
+		ps, err = s.dbox.LoadPlainFile("/bricks.pac")
+	}
 	if err != nil {
 		Log.Error("load pac from dropbox", zap.Error(err))
 		return nil, err
