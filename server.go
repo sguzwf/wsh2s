@@ -18,15 +18,19 @@ var (
 )
 
 type Server struct {
-	AcmeDomain         string
-	DropboxAccessToken string
-	DropboxDomainKey   string
+	AcmeDomain         string // can be ignored when TCP
+	DropboxAccessToken string // can be ignored when TCP
+	DropboxDomainKey   string // can be ignored when TCP
 	H2RetryMaxSecond   time.Duration
 	H2SleepToRunSecond time.Duration
 	WsBufSize          int
 	H2BufSize          uint32
 	PingSecond         uint
 	TCP                uint64
+
+	ServerCrt []byte
+	ServerKey []byte
+	ChainPerm []byte
 
 	dbox              *dropboxer
 	challengeProvider *wrapperChallengeProvider
@@ -70,12 +74,9 @@ func (s *Server) Serve() error {
 		return err
 	}
 
-	if s.TCP == 0 {
-		s.dbox, err = newDropbox(s.DropboxAccessToken, s.DropboxDomainKey)
-		if err != nil {
-			Log.Error("create dropbox client", zap.Error(err))
-			return err
-		}
+	s.dbox, err = newDropbox(s.DropboxAccessToken, s.DropboxDomainKey)
+	if err != nil {
+		Log.Error("create dropbox client", zap.Error(err))
 	}
 
 	if _, err = s.loadPac(); err != nil {

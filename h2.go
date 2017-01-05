@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -112,7 +113,7 @@ func (s *Server) serveH2c(w http.ResponseWriter, r *http.Request) {
 			Log.Error("CONNECT failed", zap.Object("err", err))
 		}
 	}()
-	remote, err := net.DialTimeout("tcp", r.Host, time.Second*10)
+	remote, err := net.DialTimeout("tcp", r.Host, time.Second*15)
 	if err != nil {
 		Log.Error("dail failed", zap.Error(err), zap.String("host", r.Host))
 		w.WriteHeader(http.StatusNotImplemented)
@@ -143,7 +144,7 @@ func (s *Server) serveH2r(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	remote, err := net.DialTimeout("tcp", r.Host, time.Second*10)
+	remote, err := net.DialTimeout("tcp", r.Host, time.Second*15)
 	if err != nil {
 		Log.Error("dail failed", zap.Error(err), zap.String("host", r.Host))
 		w.WriteHeader(http.StatusNotImplemented)
@@ -168,20 +169,17 @@ func (s *Server) serveH2r(w http.ResponseWriter, r *http.Request) {
 func (s *Server) newH2TlsConfig() (*tls.Config, error) {
 	if s.TCP != 0 {
 		// 1. LoadServerCert
-		cert, err := tls.LoadX509KeyPair("server.crt", "server.key")
+		cert, err := tls.X509KeyPair(s.ServerCrt, s.ServerKey)
 		if err != nil {
 			Log.Error("loading server certificate", zap.Error(err))
 			return nil, err
 		}
 
 		// 2. LoadCACert
-		caCert, err := ioutil.ReadFile("chain.pem")
-		if err != nil {
-			Log.Error("loading CA certificate", zap.Error(err))
-			return nil, err
-		}
 		caPool := x509.NewCertPool()
-		caPool.AppendCertsFromPEM(caCert)
+		if !caPool.AppendCertsFromPEM(s.ChainPerm) {
+			return nil, errors.New("loading CA certificate failed")
+		}
 
 		config := tls.Config{
 			Certificates: []tls.Certificate{cert},

@@ -4,6 +4,10 @@ rm -rf BRICKS
 rm bricks.pac
 git clone --depth=1 https://github.com/Leask/BRICKS.git
 cd BRICKS
+
+./bricks add 'xda-cdn.com'
+./bricks add 'evernote.com'
+
 ./bricks makpac 'PROXY {{.}}; DIRECT'
 cp ./bricks.pac ..
 cd ..
