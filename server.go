@@ -3,90 +3,53 @@ package wsh2s
 import (
 	"encoding/json"
 	"errors"
-	"io/ioutil"
 	"net/http"
-	"sync"
-	"time"
 
 	"github.com/empirefox/gotool/paas"
+	"github.com/empirefox/wsh2s/config"
 	"github.com/gorilla/websocket"
 	"github.com/uber-go/zap"
 )
 
-var (
-	Log zap.Logger
-)
-
 type Server struct {
-	AcmeDomain         string // can be ignored when TCP
-	DropboxAccessToken string // can be ignored when TCP
-	DropboxDomainKey   string // can be ignored when TCP
-	H2RetryMaxSecond   time.Duration
-	H2SleepToRunSecond time.Duration
-	WsBufSize          int
-	H2BufSize          uint32
-	PingSecond         uint
-	TCP                uint64
+	config config.Config
 
-	ServerCrt []byte
-	ServerKey []byte
-	ChainPerm []byte
+	logger zap.Logger
 
-	dbox              *dropboxer
-	challengeProvider *wrapperChallengeProvider
-	httpServer        *http.Server
-	upgrader          websocket.Upgrader
+	httpServer *http.Server
+	upgrader   websocket.Upgrader
 
 	// globalWsListener
 	globalWsChan chan *Ws
-
-	info  []byte
-	pac   []byte
-	muPac sync.RWMutex
+	info         []byte
 }
 
-func (s *Server) Serve() error {
-	s.globalWsChan = make(chan *Ws)
-	if s.H2SleepToRunSecond == 0 {
-		s.H2SleepToRunSecond = 2
+func NewServer(config *config.Config) (*Server, error) {
+	s := &Server{
+		config:       *config,
+		logger:       config.Logger,
+		globalWsChan: make(chan *Ws),
 	}
-	if s.H2BufSize == 0 {
-		s.H2BufSize = 64 << 10
-	}
-	if s.WsBufSize == 0 {
-		s.WsBufSize = 65 << 10
-	}
-	if s.PingSecond == 0 {
-		s.PingSecond = 45
-	}
-	s.upgrader.ReadBufferSize = s.WsBufSize
-	s.upgrader.WriteBufferSize = s.WsBufSize
 
-	if s.H2RetryMaxSecond == 0 {
-		s.H2RetryMaxSecond = 30
-	}
+	s.upgrader.ReadBufferSize = s.config.WsBufSizeKB << 10
+	s.upgrader.WriteBufferSize = s.config.WsBufSizeKB << 10
 
 	info, err := json.Marshal(map[string]interface{}{
-		"PingSecond": s.PingSecond,
+		"PingSecond": s.config.PingSecond,
 	})
 	if err != nil {
-		Log.Error("compute server info", zap.Error(err))
-		return err
-	}
-
-	s.dbox, err = newDropbox(s.DropboxAccessToken, s.DropboxDomainKey)
-	if err != nil {
-		Log.Error("create dropbox client", zap.Error(err))
-	}
-
-	if _, err = s.loadPac(); err != nil {
-		return err
+		s.logger.Error("compute server info", zap.Error(err))
+		return nil, err
 	}
 
 	s.info = info
 
-	if s.TCP == 0 {
-		s.challengeProvider = new(wrapperChallengeProvider)
+	return s, nil
+}
+
+func (s *Server) Serve() error {
+
+	if s.config.TCP == 0 {
 		s.httpServer = s.newHttpServer()
 
 		go s.listenAndServeH2All()
@@ -101,64 +64,27 @@ func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if err := recover(); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			Log.Error("serveWs error", zap.Object("err", err))
+			s.logger.Error("serveWs error", zap.Object("err", err))
 		}
 	}()
-	Log.Debug("websocket start")
+	s.logger.Debug("websocket start")
 	ws, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		Log.Error("websocket failed", zap.Error(err))
+		s.logger.Error("websocket failed", zap.Error(err))
 		return
 	}
-	Log.Debug("websocket ok")
-	s.globalWsChan <- NewWs(ws, s.WsBufSize)
+	s.logger.Debug("websocket ok")
+	s.globalWsChan <- NewWs(ws, s.config.WsBufSizeKB<<10)
 }
 
 func (s *Server) newHttpServer() *http.Server {
 	httpMux := http.NewServeMux()
 
 	httpMux.HandleFunc("/p", s.serveWs)
-	httpMux.HandleFunc("/.well-known/acme-challenge/", s.challengeProvider.challengeHanlder)
-
 	httpMux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
 	return &http.Server{Addr: paas.BindAddr, Handler: httpMux}
-}
-
-func (s *Server) loadPac() ([]byte, error) {
-	ps, err := ioutil.ReadFile("bricks.pac")
-	if err != nil {
-		ps, err = s.dbox.LoadPlainFile("/bricks.pac")
-	}
-	if err != nil {
-		Log.Error("load pac from dropbox", zap.Error(err))
-		return nil, err
-	}
-	s.muPac.Lock()
-	defer s.muPac.Unlock()
-	s.pac = ps
-	return ps, nil
-}
-
-func (s *Server) getPac() []byte {
-	s.muPac.RLock()
-	defer s.muPac.RUnlock()
-	return s.pac
-}
-
-func (s *Server) tryLoadPac() []byte {
-	ps, err := s.dbox.LoadPlainFile("/bricks.pac")
-	if err != nil {
-		Log.Error("load pac from dropbox", zap.Error(err))
-		s.muPac.RLock()
-		defer s.muPac.RUnlock()
-		return s.pac
-	}
-	s.muPac.Lock()
-	defer s.muPac.Unlock()
-	s.pac = ps
-	return s.pac
 }

@@ -13,20 +13,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/empirefox/acmewrapper"
 	"github.com/uber-go/zap"
 	"golang.org/x/net/http2"
 )
 
 func (s *Server) listenAndServeH2All() {
-	time.Sleep(time.Second * s.H2SleepToRunSecond)
+	time.Sleep(time.Second * s.config.H2SleepToRunSecond)
 
 	tlsConfig, err := s.newH2TlsConfig()
 	if err != nil {
 		return
 	}
 
-	s.listenAndServeH2(tlsConfig, s.TCP != 0)
+	s.listenAndServeH2(tlsConfig, s.config.TCP != 0)
 }
 
 func (s *Server) listenAndServeH2(tlsConfig *tls.Config, tcp bool) {
@@ -34,13 +33,13 @@ func (s *Server) listenAndServeH2(tlsConfig *tls.Config, tcp bool) {
 	var tlsListener net.Listener
 	var err error
 	if tcp {
-		if s.TCP == 0 {
+		if s.config.TCP == 0 {
 			return
 		}
-		laddr = fmt.Sprintf(":%d", s.TCP)
+		laddr = fmt.Sprintf(":%d", s.config.TCP)
 		tlsListener, err = tls.Listen("tcp", laddr, tlsConfig)
 		if err != nil {
-			Log.Error("tcp tlsListener failed", zap.Error(err))
+			s.logger.Error("tcp tlsListener failed", zap.Error(err))
 			return
 		}
 	} else {
@@ -71,13 +70,13 @@ func (s *Server) newH2Server(tlsConfig *tls.Config, laddr string) (*http.Server,
 		},
 	}
 	http2.ConfigureServer(h2Server, &http2.Server{
-		MaxReadFrameSize: s.H2BufSize,
+		MaxReadFrameSize: s.config.H2BufSizeKB << 10,
 	})
 
 	afterServeError := func(err error) {
-		Log.Error("h2 server failed", zap.Error(err))
+		s.logger.Error("h2 server failed", zap.Error(err))
 		mu.Lock()
-		if h2sleep < s.H2RetryMaxSecond {
+		if h2sleep < s.config.H2RetryMaxSecond {
 			h2sleep++
 		}
 		sec := h2sleep
@@ -96,9 +95,7 @@ func (s *Server) serveH2(w http.ResponseWriter, r *http.Request) {
 	case r.Host == "i:81":
 		w.Write(s.info)
 	case r.Host == "i:82":
-		w.Write(s.getPac())
-	case r.Host == "i:83":
-		w.Write(s.tryLoadPac())
+		w.Write(s.config.BricksPac)
 	case r.URL.Path == "/r" && r.Method == "POST":
 		s.serveH2r(w, r)
 	default:
@@ -110,12 +107,12 @@ func (s *Server) serveH2c(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if err := recover(); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			Log.Error("CONNECT failed", zap.Object("err", err))
+			s.logger.Error("CONNECT failed", zap.Object("err", err))
 		}
 	}()
 	remote, err := net.DialTimeout("tcp", r.Host, time.Second*15)
 	if err != nil {
-		Log.Error("dail failed", zap.Error(err), zap.String("host", r.Host))
+		s.logger.Error("dail failed", zap.Error(err), zap.String("host", r.Host))
 		w.WriteHeader(http.StatusNotImplemented)
 		return
 	}
@@ -138,7 +135,7 @@ func (s *Server) serveH2r(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if err := recover(); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			Log.Error("REVERSE failed", zap.Object("err", err))
+			s.logger.Error("REVERSE failed", zap.Object("err", err))
 		} else {
 			w.WriteHeader(http.StatusOK)
 		}
@@ -146,7 +143,7 @@ func (s *Server) serveH2r(w http.ResponseWriter, r *http.Request) {
 
 	remote, err := net.DialTimeout("tcp", r.Host, time.Second*15)
 	if err != nil {
-		Log.Error("dail failed", zap.Error(err), zap.String("host", r.Host))
+		s.logger.Error("dail failed", zap.Error(err), zap.String("host", r.Host))
 		w.WriteHeader(http.StatusNotImplemented)
 		return
 	}
@@ -167,49 +164,25 @@ func (s *Server) serveH2r(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) newH2TlsConfig() (*tls.Config, error) {
-	if s.TCP != 0 {
-		// 1. LoadServerCert
-		cert, err := tls.X509KeyPair(s.ServerCrt, s.ServerKey)
-		if err != nil {
-			Log.Error("loading server certificate", zap.Error(err))
-			return nil, err
-		}
-
-		// 2. LoadCACert
-		caPool := x509.NewCertPool()
-		if !caPool.AppendCertsFromPEM(s.ChainPerm) {
-			return nil, errors.New("loading CA certificate failed")
-		}
-
-		config := tls.Config{
-			Certificates: []tls.Certificate{cert},
-			ClientCAs:    caPool,
-			ClientAuth:   tls.RequireAndVerifyClientCert,
-			MinVersion:   tls.VersionTLS12,
-			NextProtos:   []string{http2.NextProtoTLS},
-		}
-		return &config, nil
-	}
-
-	w, err := acmewrapper.New(acmewrapper.Config{
-		Domains: []string{s.AcmeDomain},
-
-		TLSCertFile: fmt.Sprintf("/%s/%s", s.AcmeDomain, "cert.pem"),
-		TLSKeyFile:  fmt.Sprintf("/%s/%s", s.AcmeDomain, "key.pem"),
-
-		RegistrationFile: fmt.Sprintf("/%s/%s", s.AcmeDomain, "user.reg"),
-		PrivateKeyFile:   fmt.Sprintf("/%s/%s", s.AcmeDomain, "user.pem"),
-
-		TOSCallback: acmewrapper.TOSAgree,
-
-		HTTP01ChallengeProvider: s.challengeProvider,
-
-		SaveFileCallback: s.dbox.SaveFile,
-		LoadFileCallback: s.dbox.LoadFile,
-	})
+	// 1. LoadServerCert
+	cert, err := tls.X509KeyPair(s.config.ServerCrt, s.config.ServerKey)
 	if err != nil {
-		Log.Error("acmewrapper failed", zap.Error(err))
+		s.logger.Error("loading server certificate", zap.Error(err))
 		return nil, err
 	}
-	return w.TLSConfig(), nil
+
+	// 2. LoadCACert
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM(s.config.ChainPerm) {
+		return nil, errors.New("loading CA certificate failed")
+	}
+
+	config := tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ClientCAs:    caPool,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		MinVersion:   tls.VersionTLS12,
+		NextProtos:   []string{http2.NextProtoTLS},
+	}
+	return &config, nil
 }
