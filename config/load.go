@@ -8,7 +8,9 @@ import (
 	"github.com/caarlos0/env"
 	"github.com/empirefox/gotool/crypt"
 	"github.com/mcuadros/go-defaults"
-	"github.com/uber-go/zap"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"gopkg.in/go-playground/validator.v9"
 )
@@ -65,7 +67,7 @@ func LoadFromXpsWithEnv() (*Config, error) {
 		return true
 	}
 	validate.RegisterValidation("rq", validateRequireField)
-	validate.RegisterAlias("zap_level", "eq=debug|eq=info|eq=warn|eq=error|eq=dpanic|eq=panic|eq=fatal")
+	validate.RegisterAlias("zap_level", "len=0|eq=debug|eq=info|eq=warn|eq=error|eq=dpanic|eq=panic|eq=fatal")
 	validate.RegisterAlias("sign_alg", "eq=HS256|eq=HS384|eq=HS512")
 
 	defaults.SetDefaults(config)
@@ -74,13 +76,22 @@ func LoadFromXpsWithEnv() (*Config, error) {
 		return nil, err
 	}
 
-	level := new(zap.Level)
-	level.Set(config.ZapLevel)
-	config.Logger = zap.New(
-		zap.NewJSONEncoder(zap.NoTime()),
-		zap.AddCaller(),
-		level,
-	)
+	var zapConfig zap.Config
+	if config.Dev {
+		zapConfig = zap.NewDevelopmentConfig()
+	} else {
+		zapConfig = zap.NewProductionConfig()
+	}
+
+	if config.ZapLevel != "" {
+		level := new(zapcore.Level)
+		level.Set(config.ZapLevel)
+		zapConfig.Level.SetLevel(*level)
+	}
+	config.Logger, err = zapConfig.Build()
+	if err != nil {
+		return nil, err
+	}
 
 	http2.VerboseLogs = config.H2Logs
 	return config, nil

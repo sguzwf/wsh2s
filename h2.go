@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/uber-go/zap"
+	"go.uber.org/zap"
 	"golang.org/x/net/http2"
 )
 
@@ -107,12 +107,12 @@ func (s *Server) serveH2c(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if err := recover(); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			s.logger.Error("CONNECT failed", zap.Object("err", err))
+			s.logger.Error("CONNECT failed", zap.Any("err", err))
 		}
 	}()
 	remote, err := net.DialTimeout("tcp", r.Host, time.Second*15)
 	if err != nil {
-		s.logger.Error("dail failed", zap.Error(err), zap.String("host", r.Host))
+		s.logger.Info("dail failed", zap.Error(err), zap.String("host", r.Host))
 		w.WriteHeader(http.StatusNotImplemented)
 		return
 	}
@@ -135,7 +135,7 @@ func (s *Server) serveH2r(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if err := recover(); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			s.logger.Error("REVERSE failed", zap.Object("err", err))
+			s.logger.Error("REVERSE failed", zap.Any("err", err))
 		} else {
 			w.WriteHeader(http.StatusOK)
 		}
@@ -143,7 +143,7 @@ func (s *Server) serveH2r(w http.ResponseWriter, r *http.Request) {
 
 	remote, err := net.DialTimeout("tcp", r.Host, time.Second*15)
 	if err != nil {
-		s.logger.Error("dail failed", zap.Error(err), zap.String("host", r.Host))
+		s.logger.Info("dail failed", zap.Error(err), zap.String("host", r.Host))
 		w.WriteHeader(http.StatusNotImplemented)
 		return
 	}

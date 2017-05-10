@@ -8,13 +8,13 @@ import (
 	"github.com/empirefox/gotool/paas"
 	"github.com/empirefox/wsh2s/config"
 	"github.com/gorilla/websocket"
-	"github.com/uber-go/zap"
+	"go.uber.org/zap"
 )
 
 type Server struct {
 	config config.Config
 
-	logger zap.Logger
+	logger *zap.Logger
 
 	httpServer *http.Server
 	upgrader   websocket.Upgrader
@@ -64,7 +64,7 @@ func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if err := recover(); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			s.logger.Error("serveWs error", zap.Object("err", err))
+			s.logger.Error("serveWs error", zap.Any("err", err))
 		}
 	}()
 	s.logger.Debug("websocket start")
