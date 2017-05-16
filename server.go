@@ -5,6 +5,9 @@ import (
 	"errors"
 	"net/http"
 
+	"golang.org/x/net/http2"
+
+	"github.com/empirefox/cement/clog"
 	"github.com/empirefox/gotool/paas"
 	"github.com/empirefox/wsh2s/config"
 	"github.com/gorilla/websocket"
@@ -12,9 +15,9 @@ import (
 )
 
 type Server struct {
-	config config.Config
+	config config.Server
 
-	logger *zap.Logger
+	logger clog.Logger
 
 	httpServer *http.Server
 	upgrader   websocket.Upgrader
@@ -25,9 +28,17 @@ type Server struct {
 }
 
 func NewServer(config *config.Config) (*Server, error) {
+	http2.VerboseLogs = config.Server.H2Logs
+
+	logger, err := clog.NewLogger(config.Clog)
+	if err != nil {
+		logger.Error("init clog failed", zap.Error(err))
+		return nil, err
+	}
+
 	s := &Server{
-		config:       *config,
-		logger:       config.Logger,
+		config:       config.Server,
+		logger:       logger,
 		globalWsChan: make(chan *Ws),
 	}
 
@@ -38,7 +49,7 @@ func NewServer(config *config.Config) (*Server, error) {
 		"PingSecond": s.config.PingSecond,
 	})
 	if err != nil {
-		s.logger.Error("compute server info", zap.Error(err))
+		logger.Error("compute server info", zap.Error(err))
 		return nil, err
 	}
 

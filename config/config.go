@@ -3,10 +3,10 @@ package config
 import (
 	"time"
 
-	"go.uber.org/zap"
+	"github.com/empirefox/cement/clog"
 )
 
-type Config struct {
+type Server struct {
 	WsBufSizeKB int    `default:"65" validate:"gt=0"`
 	H2BufSizeKB uint32 `default:"64" validate:"gt=0"`
 
@@ -16,13 +16,19 @@ type Config struct {
 	PingSecond         int           `default:"45"    env:"PING_SECOND"          validate:"gte=0"`
 	TCP                int           `                env:"WSH_TCP"              validate:"gte=0"`
 	Dev                bool          `                env:"DEV"`
-	ZapLevel           string        `                env:"ZAP_LEVEL"            validate:"zap_level"`
 
-	ServerCrt []byte `json:"-" validate:"gt=0" xps:"server.crt"`
-	ServerKey []byte `json:"-" validate:"gt=0" xps:"server.key"`
-	ChainPerm []byte `json:"-" validate:"gt=0" xps:"chain.pem"`
-	BricksPac []byte `json:"-" validate:"gt=0" xps:"bricks.pac"`
+	ServerCrt []byte `json:"-" ymal:"-" toml:"-" validate:"gt=0" xps:"server.crt"`
+	ServerKey []byte `json:"-" ymal:"-" toml:"-" validate:"gt=0" xps:"server.key"`
+	ChainPerm []byte `json:"-" ymal:"-" toml:"-" validate:"gt=0" xps:"chain.pem"`
+	BricksPac []byte `json:"-" ymal:"-" toml:"-" validate:"gt=0" xps:"bricks.pac"`
+}
 
-	Env    Env         `json:"-"`
-	Logger *zap.Logger `json:"-"`
+type Config struct {
+	Schema string `json:"-" ymal:"-" toml:"-"`
+	Server Server
+	Clog   clog.Config
+}
+
+func (c *Config) GetEnvPtrs() []interface{} {
+	return []interface{}{&c.Server, &c.Clog}
 }
