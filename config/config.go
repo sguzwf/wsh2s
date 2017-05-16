@@ -17,14 +17,14 @@ type Server struct {
 	TCP                int           `                env:"WSH_TCP"              validate:"gte=0"`
 	Dev                bool          `                env:"DEV"`
 
-	ServerCrt []byte `json:"-" ymal:"-" toml:"-" validate:"gt=0" xps:"server.crt"`
-	ServerKey []byte `json:"-" ymal:"-" toml:"-" validate:"gt=0" xps:"server.key"`
-	ChainPerm []byte `json:"-" ymal:"-" toml:"-" validate:"gt=0" xps:"chain.pem"`
-	BricksPac []byte `json:"-" ymal:"-" toml:"-" validate:"gt=0" xps:"bricks.pac"`
+	ServerCrt []byte `json:"-" yaml:"-" toml:"-" validate:"gt=0" xps:"server.crt"`
+	ServerKey []byte `json:"-" yaml:"-" toml:"-" validate:"gt=0" xps:"server.key"`
+	ChainPerm []byte `json:"-" yaml:"-" toml:"-" validate:"gt=0" xps:"chain.pem"`
+	BricksPac []byte `json:"-" yaml:"-" toml:"-" validate:"gt=0" xps:"bricks.pac"`
 }
 
 type Config struct {
-	Schema string `json:"-" ymal:"-" toml:"-"`
+	Schema string `json:"-" yaml:"-" toml:"-"`
 	Server Server
 	Clog   clog.Config
 }
