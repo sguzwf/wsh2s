@@ -6,7 +6,7 @@ import (
 
 func LoadFromXpsWithEnv() (*Config, error) {
 	config := new(Config)
-	err := crypt.LoadConfig(config, nil)
+	err := xps.LoadConfig(config, nil)
 	if err != nil {
 		return nil, err
 	}
